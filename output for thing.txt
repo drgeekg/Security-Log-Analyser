@@ -1,0 +1,141 @@
+Comprehensive Security Report – January 1‑5 2024
+(All timestamps are UTC unless otherwise noted)
+
+1. Executive Summary
+The log set shows a high‑volume, multi‑vector attack campaign targeting authentication, web‑application endpoints, and internal services. The most critical findings are:
+
+#	Critical Indicator	Why it matters
+1	Remote‑Code‑Execution (RCE) attempts on /wp‑admin – multiple IPs (203.0.113.1, 192.168.1.100) tried to upload/execute back‑door payloads.	Successful RCE would give full control of the web server.
+2	Directory‑Traversal to /../../etc/passwd – 10.0.0.150, 104.26.10.78, 203.0.113.1, 45.33.32.156.	Could expose system password files and other secrets.
+3	Malicious file uploads (backdoor.jsp, shell.php) – 15 distinct events across 6 IPs.	Provides persistent foothold; many uploads succeeded (HTTP 200/201).
+4	Credential‑stuffing / brute‑force login bursts – ≥ 12 distinct bursts from 185.220.101.1, 45.33.32.156, 203.0.113.1, 10.0.0.1, 192.168.10.44.	Indicates automated password‑spraying; several accounts (sysadmin, root, monitor) were targeted.
+5	SQL‑Injection (SQLi) and Command‑Injection attempts – ≥ 14 events, many using sqlmap/1.6.	Successful exploitation could lead to data leakage or further code execution.
+6	DDoS‑style traffic spikes – 185.220.101.1 and 45.33.32.156 generated repeated high‑frequency requests (e.g., 03:16:00, 07:50:48).	Could degrade service availability.
+7	Outbound connections to known malicious hosts – 45.33.32.156, 203.0.113.1, 185.220.101.1 observed from internal IPs (10.0.0.150, 172.16.0.150, 10.10.10.5).	Possible data exfiltration or C2 channel.
+If any of the above succeed, the impact ranges from full system compromise to credential theft, data loss, and service outage.
+
+2. Detailed Findings
+2.1 Failed Authentication Activity
+Date	Time	Source IP	Username	Endpoint	Reason
+2024‑01‑01	02:40:55	185.220.101.1	sysadmin	POST /dashboard	401 Unauthorized
+2024‑01‑01	03:02:24	172.16.5.25	sysadmin	CONNECT /reset‑password	401
+2024‑01‑01	04:58:27	185.220.101.1	sysadmin	HEAD /uploads/file1.jpg	401
+2024‑01‑01	13:20:56	172.16.5.25	guest	GET /reset‑password	401
+2024‑01‑01	14:24:23	10.10.10.5	operator	HEAD /index.html	401
+2024‑01‑01	15:43:38	192.168.1.1	monitor	POST /login	401
+2024‑01‑01	20:35:01	45.33.32.156	john	HEAD /api/v2/auth	401
+2024‑01‑01	21:08:09	203.0.113.1	root	PUT /wp‑admin	RCE attempt (failed auth)
+2024‑01‑01	23:21:35	203.0.113.1	bob	CONNECT /wp‑admin	401
+2024‑01‑03	04:43:04	192.168.10.44	john	PATCH /api/users	401
+2024‑01‑03	05:04:42	198.51.100.2	john	PATCH /login	401
+2024‑01‑03	10:59:11	172.16.0.150	service_account	PUT /uploads/file1.jpg	401
+2024‑01‑03	16:06:01	185.220.101.1	john	GET /wp‑admin	401
+2024‑01‑03	21:01:12	10.0.0.150	john	GET /api/config	401
+2024‑01‑03	21:15:14	203.0.113.50	root	PATCH /api/data	401
+2024‑01‑03	21:24:40	172.16.5.25	bob	HEAD /api/users	401
+2024‑01‑04	00:00:38	172.16.0.150	root	PATCH /api/data	401
+2024‑01‑04	03:31:20	10.0.0.1	guest	PUT /reset‑password	401
+2024‑01‑04	04:41:01	198.51.100.10	monitor	POST /index.html	401
+2024‑01‑04	08:40:47	10.10.10.5	sysadmin	OPTIONS /login	401
+2024‑01‑04	10:43:35	203.0.113.50	operator	CONNECT /dashboard	401
+2024‑01‑04	19:01:43	198.51.100.10	operator	DELETE /login	401
+2024‑01‑04	23:10:30	198.51.100.10	guest	OPTIONS /dashboard	401
+Total explicit failed logins: 25 (including 401/403/404/500 responses).
+
+Implicit credential‑stuffing / brute‑force bursts (no explicit 401 but identified as attack vectors): ≥ 12 distinct events (see sections 2.2 & 2.3).
+
+2.2 Authentication‑Related Attack Campaigns
+Attack Type	Source IP(s)	Target(s) / Endpoint(s)	Timestamp(s)	Observed Outcome
+Credential stuffing	185.220.101.1 (linked to 45.33.32.156)	/login, /settings, /api/config	2024‑01‑01 05:18:40, 16:05:00, 18:49:00; 2024‑01‑02 12:52:37; 2024‑01‑05 14:59:42, 23:19:34	Mostly 401/404; one successful 201 Created on /api/export (01‑01 16:40:24).
+Brute‑force	45.33.32.156, 10.0.0.1, 192.168.10.44, 203.0.113.1	/api/config, /login, /api/tokens	2024‑01‑01 07:15:39, 08:27:57, 11:26:35; 2024‑01‑03 23:54:18; 2024‑01‑04 20:26:27	Mostly 401/403; some “200 OK” on /api/data (01‑02 06:46:33).
+SQL Injection (SQLi)	185.220.101.1, 172.16.5.25, 203.0.113.1, 198.51.100.2, 10.0.0.150, 104.26.10.78, 203.0.113.50, 172.16.0.150	/api/config, /api/data, /api/v2/auth, /api/users	2024‑01‑01 06:24:30, 2024‑01‑02 01:08:46, 13:57:42, 23:39:57, 2024‑01‑03 19:31:31, 2024‑01‑04 17:55:49, 2024‑01‑05 03:51:19, 05:45:47, 07:01:31, 09:50:40, 11:03:36, 11:23:08, 13:57:38, 17:19:13, 17:48:05	Tool fingerprint: sqlmap/1.6 in > 12 events. No successful exploitation observed, but the presence of a back‑door upload (see 2.4) makes the environment highly vulnerable.
+Cross‑Site Scripting (XSS)	185.220.101.1, 10.0.0.150, 192.168.1.1, 192.168.1.1 (later)	/api/users, /api/health, /api/v2/auth	2024‑01‑01 00:49:41, 23:54:50; 2024‑01‑02 23:54:50; 2024‑01‑05 15:12:13	All blocked (401/403).
+Command Injection	10.0.0.150, 203.0.113.1, 10.10.10.5, 203.0.113.1 (later)	/api/v2/auth, /login, /api/data, /dashboard	2024‑01‑01 08:43:47; 2024‑01‑03 06:40:14; 2024‑01‑03 08:42:43; 2024‑01‑04 06:52:45; 2024‑01‑04 20:02:09	All returned 4xx/5xx; however, the same IPs also performed successful file uploads.
+Remote Code Execution (RCE)	203.0.113.1, 192.168.1.100, 10.0.0.1	/wp‑admin, /api/v2/auth, /.env	2024‑01‑01 21:08:09; 23:11:54; 02‑02 06:02:27; 02‑02 19:06:22	Blocked (401/403) but indicate a high‑risk exploitation path.
+Directory Traversal	10.0.0.150, 104.26.10.78, 203.0.113.1, 45.33.32.156, 172.16.0.1	/api/config, /api/logs, /login, /wp‑admin	2024‑01‑01 11:08:00; 03‑03 07:48:39; 03‑03 15:25:21; 03‑03 16:44:19; 05‑05 06:48:46; 05‑05 20:52:55; 05‑05 22:48:42	All resulted in 4xx/5xx, but the attempts show knowledge of filesystem layout.
+2.3 Malicious File Uploads & Malware
+Timestamp	Source IP	User	Uploaded Path	Verdict
+2024‑01‑01 00:05:36	198.51.100.2	bob	/api/export (201 Created)	Unexpected success – data export capability.
+2024‑01‑01 01:31:44	185.220.101.1	deploy_bot	/api/data (404)	File flagged by Nmap Scripting Engine – likely malicious payload.
+2024‑01‑01 02:10:52	172.16.0.150	bob	/api/users (201 Created)	Unexpected success – privilege escalation attempt.
+2024‑01‑01 07:15:39	45.33.32.156	sysadmin	/settings (404)	Brute‑force context – suspicious.
+2024‑01‑01 11:08:00	203.0.113.1	admin	/api/health (Directory traversal)	RCE attempt.
+2024‑01‑03 00:16:49	45.33.32.156	guest	/uploads/backdoor.jsp	Back‑door detected.
+2024‑03‑03 12:01:54	104.26.10.78	alice	/uploads/backdoor.jsp	Back‑door detected.
+2024‑03‑03 22:07:03	10.0.0.150	deploy_bot	/uploads/shell.php	Web‑shell detected.
+2024‑04‑04 00:23:28	192.168.1.1	alice	/uploads/shell.php	Web‑shell.
+2024‑04‑04 01:30:03	172.16.5.25	root	/uploads/backdoor.jsp	Back‑door.
+2024‑04‑04 05:53:49	185.220.101.1	user	/uploads/shell.php	Web‑shell.
+2024‑04‑04 12:18:20	10.0.0.1	john	/uploads/backdoor.jsp	Back‑door.
+2024‑04‑04 12:03:15	172.16.0.150	guest	/uploads/shell.php	Web‑shell.
+2024‑05‑05 04:38:19	203.0.113.1	root	/uploads/backdoor.jsp	Back‑door.
+2024‑05‑05 10:23:33	198.51.100.10	deploy_bot	/uploads/backdoor.jsp	Back‑door.
+2024‑05‑05 14:11:43	172.16.0.150	bob	/uploads/backdoor.jsp	Back‑door.
+2024‑05‑05 20:16:13	192.168.10.44	root	/uploads/shell.php	Web‑shell.
+2024‑05‑05 13:35:03	10.0.0.1	service_account	/uploads/file1.jpg	Malware signature detected.
+2024‑05‑05 06:22:29	185.220.101.1	sysadmin	/uploads/file1.jpg	Malware signature detected.
+2024‑05‑05 06:48:46	104.26.10.78	deploy_bot	/wp‑admin (DELETE) – Directory traversal	Back‑door payload.
+Summary: At least 15 distinct malicious uploads (back‑door JSP, PHP shell, or malware‑laden files) were observed, 10 of which returned HTTP 200/201, indicating successful write access to the web‑root.
+
+2.4 Network‑Level Anomalies
+Type	Source IP	Destination / Related IP	Timestamp	Comment
+DNS Tunneling	203.0.113.1 → 185.220.101.1	2024‑01‑01 00:20:49	Detected via anomalous DNS query patterns.	
+DNS Tunneling	172.16.0.1 → 185.220.101.1	2024‑01‑01 14:57:10	Same pattern.	
+Outbound to malicious C2	10.0.0.150 → 45.33.32.156	2024‑01‑03 18:34:05	Suspicious outbound connection flagged.	
+Outbound to malicious C2	172.16.0.150 → 45.33.32.156	2024‑01‑04 09:14:49	Same C2 host.	
+Outbound to malicious C2	10.10.10.5 → 203.0.113.1	2024‑01‑04 14:10:29		
+Outbound to malicious C2	198.51.100.2 → 203.0.113.1	2024‑01‑04 19:18:08		
+Outbound to malicious C2	203.0.113.1 → 185.220.101.1	2024‑01‑04 22:12:52		
+Outbound to malicious C2	10.10.10.5 → 45.33.32.156	2024‑01‑04 22:51:50		
+Outbound to malicious C2	104.26.10.78 → 203.0.113.1	2024‑05‑05 00:36:12		
+Port Scanning	10.0.0.150, 10.0.0.1, 45.33.32.156, 172.16.0.1, 192.168.10.44	Various internal services	Multiple timestamps (see sections 2.2 & 2.3).	
+DDoS‑style burst	185.220.101.1	–	2024‑01‑01 03:16:00 (high request rate).	
+DDoS‑style burst	45.33.32.156	–	2024‑01‑04 07:50:48, 10:00:15, 10:23:36.	
+2.5 Summary of Attack Volume by IP
+IP	Primary Behaviors	# of distinct events*
+203.0.113.1	RCE, SQLi, Credential‑stuffing, Directory‑traversal, DNS tunneling, brute‑force, back‑door uploads	≈ 22
+185.220.101.1	Credential‑stuffing, brute‑force, malicious uploads, malware, DDoS, command‑injection	≈ 20
+45.33.32.156	DDoS, brute‑force, malicious uploads, command‑injection, port‑scan	≈ 15
+172.16.5.25	Brute‑force, SQLi, session‑hijacking, back‑door upload	≈ 12
+10.0.0.150	Directory‑traversal, SQLi, malicious uploads, outbound C2, port‑scan	≈ 11
+10.10.10.5	Privilege escalation, command‑injection, DDoS, outbound C2	≈ 9
+192.168.10.44	SQLi, port‑scan, outbound C2, malware detection	≈ 9
+198.51.100.2	Brute‑force, DNS tunneling, data export (201 Created)	≈ 8
+Other internal IPs (10.0.0.1, 172.16.0.150, 172.16.0.1, 104.26.10.78, 192.168.1.1)	Mixed low‑volume attacks (SQLi, XSS, back‑door uploads)	≤ 5 each
+*Counts are approximate; overlapping events (e.g., a single request flagged as both “SQLi” and “brute‑force”) are counted once per category.
+
+3. Threat Prioritization (CVSS‑like Impact)
+Rank	Threat	CVSS‑v3 Base (approx.)	Rationale
+1	Successful RCE / Web‑shell (e.g., backdoor.jsp from 203.0.113.1)	9.8 (Critical)	Gives attacker full OS‑level control; many successful uploads observed.
+2	Directory‑Traversal to /etc/passwd (multiple IPs)	8.6 (High)	Could expose credential hashes, enabling further compromise.
+3	Credential‑stuffing / Brute‑force on privileged accounts (sysadmin, root)	7.5 (High)	Repeated attempts increase chance of password compromise; some successful export actions observed.
+4	SQL Injection (sqlmap) targeting admin APIs	7.0 (High)	Potential for data exfiltration or privilege escalation; many attempts.
+5	Malware‑laden file uploads (shell.php, backdoor.jsp)	6.8 (Medium‑High)	Persistent foothold; some uploads succeeded with 200/201.
+6	DDoS traffic bursts	6.0 (Medium)	Service availability risk; observed high‑frequency bursts.
+7	Outbound C2 connections	5.5 (Medium)	Possible data exfiltration; observed from internal hosts.
+8	XSS / Command Injection (blocked)	5.0 (Medium)	Could lead to session hijacking; currently blocked but indicative of reconnaissance.
+9	Port Scanning / Recon	4.3 (Low‑Medium)	Early‑stage activity; useful for mapping but not yet exploitative.
+4. Discrepancies & Ambiguities
+Issue	Details	Impact on analysis
+Mixed status codes for the same endpoint	/api/export shows both 201 Created (01‑01 00:05:36) and 304 Not Modified (05‑05 01:22:05).	Indicates inconsistent access control; may be a rule‑bypass.
+“500 Internal Server Error” flagged as a failed login (e.g., 2024‑01‑03 21:37:49)	500 may be a server‑side failure unrelated to auth.	Treated as a possible failed auth but flagged for further investigation.
+Tool fingerprints vs. actual payload	Some entries list sqlmap but the HTTP method is OPTIONS (e.g., 05‑05 07:01:31).	Could be false‑positive scanning; still warrants monitoring.
+Duplicate timestamps across different chunks (e.g., 2024‑01‑04 20:26:27 appears in both “failed login” and “brute‑force” sections).	Same event classified under multiple categories – deduplicated in counts.	
+IP “10.0.0.1” appears both as internal host and as attacker	Likely a compromised internal host acting as a pivot.	Highlights need for internal host isolation.
+5. Immediate Recommendations
+Priority	Action	Owner / Timeline
+Critical	Isolate and quarantine all hosts that successfully uploaded back‑door files (/uploads/backdoor.jsp, /uploads/shell.php). Deploy host‑based IDS to block further writes to the web‑root.	Infra team – within 2 h
+Critical	Block external IPs 203.0.113.1, 185.220.101.1, 45.33.32.156, 172.16.5.25, 10.0.0.150 at the perimeter firewall and enforce geo‑IP restrictions if not business‑critical.	Network security – within 4 h
+High	Force password reset for all privileged accounts (sysadmin, root, operator, monitor, deploy_bot). Enable MFA where possible.	IAM team – within 12 h
+High	Deploy Web Application Firewall (WAF) rules to block known attack patterns: SQLi (sqlmap signatures), XSS payloads, directory‑traversal (../), and command‑injection strings.	AppSec – within 24 h
+High	Patch vulnerable endpoints (/wp-admin, /api/v2/auth, /api/config) and ensure latest security patches for the underlying CMS/Framework.	Patch management – within 48 h
+Medium	Enable logging of all outbound connections and enforce egress filtering to allow only approved destinations. Alert on connections to 45.33.32.156, 203.0.113.1, 185.220.101.1.	Network ops – within 48 h
+Medium	Run anti‑malware scans on all web‑servers and containers to locate any persisted back‑doors or malicious binaries.	Endpoint security – within 72 h
+Medium	Rate‑limit authentication endpoints (/login, /reset-password, /api/auth) and implement account lockout after 5 failed attempts.	DevOps – within 72 h
+Low	Review and tighten IAM policies – remove unused service accounts (service_account, deploy_bot) and enforce least‑privilege.	IAM – within 5 days
+Low	Conduct a full forensic review of compromised internal hosts (e.g., 10.0.0.1, 10.0.0.150) for signs of persistence or lateral movement.	Incident response – within 5 days
+Low	Update IDS/IPS signatures to include the observed malicious user‑agents (Nikto/2.1.6, Nmap Scripting Engine, sqlmap/1.6).	SOC – within 3 days
+6. Conclusion
+The logs reveal a coordinated, multi‑stage attack leveraging credential‑stuffing, brute‑force, SQLi, command‑injection, and malicious file uploads to gain footholds on the web server. The most urgent actions are to contain the back‑door uploads, block the external malicious IPs, and reset privileged credentials. Follow‑up forensic analysis is required to confirm whether any of the RCE or directory‑traversal attempts succeeded and to ensure that no persistent agents remain on the network.
+
+If you need deeper packet captures, host forensics, or assistance with remediation playbooks, please let us know.

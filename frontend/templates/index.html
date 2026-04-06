@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Security-Log-Analyser — AI-powered security log analysis with RAG and Ollama LLM">
+    <title>Security-Log-Analyser</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>">
+    <!-- Markdown Rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Syntax Highlighting -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
+    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+</head>
+<body>
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header__logo">
+                <div class="header__icon">🛡️</div>
+                <h1 class="header__title">Security-Log-Analyser</h1>
+            </div>
+            <p class="header__subtitle">AI-powered security log analysis using RAG pipeline &amp; Ollama LLM</p>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-grid">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <!-- Log Files Card -->
+                <div class="glass-card">
+                    <div class="card-title">
+                        <span class="icon">📁</span> Log Files
+                    </div>
+                    <ul class="file-list" id="fileList">
+                        <li class="file-item" style="justify-content: center; color: var(--text-muted); font-size: 0.85rem;">
+                            Loading files...
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Upload Card -->
+                <div class="glass-card">
+                    <div class="card-title">
+                        <span class="icon">📤</span> Upload Log File
+                    </div>
+                    <div class="upload-area" id="uploadArea">
+                        <span class="upload-area__icon">☁️</span>
+                        <p class="upload-area__text">
+                            Drag &amp; drop or <strong>browse</strong>
+                        </p>
+                        <input type="file" id="fileInput" accept=".md,.txt,.log,.csv">
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Query Panel -->
+            <section class="query-panel">
+                <!-- Query Input Card -->
+                <div class="glass-card">
+                    <div class="card-title">
+                        <span class="icon">🔎</span> Query Analysis
+                    </div>
+
+                    <!-- Status Bar -->
+                    <div class="status-bar status-bar--idle" id="statusBar">
+                        <span class="status-dot"></span>
+                        <span id="statusText">Select a log file to begin</span>
+                    </div>
+
+                    <!-- Query Input -->
+                    <div class="query-input-wrapper">
+                        <textarea
+                            class="query-input"
+                            id="queryInput"
+                            placeholder="Ask about your security logs... e.g. 'What suspicious activities were detected?'"
+                            rows="1"
+                            disabled
+                        ></textarea>
+                        <button class="query-submit" id="querySubmit" disabled title="Analyze">
+                            ▶
+                        </button>
+                    </div>
+
+                    <!-- Quick Action Buttons -->
+                    <div class="quick-actions" id="quickActions" style="margin-top: 12px;">
+                        <button class="quick-action-btn" data-query="Summarize all suspicious activities in the logs">🔍 Suspicious Activities</button>
+                        <button class="quick-action-btn" data-query="List all failed login attempts with IP addresses">🚫 Failed Logins</button>
+                        <button class="quick-action-btn" data-query="Detect any brute force or DDoS attacks">⚡ Brute Force / DDoS</button>
+                        <button class="quick-action-btn" data-query="Identify SQL injection attempts">💉 SQL Injection</button>
+                        <button class="quick-action-btn" data-query="What IPs performed the most attack attempts?">🌐 Top Attacker IPs</button>
+                    </div>
+                </div>
+
+                <!-- Response Card -->
+                <div class="glass-card response-area" id="responseArea">
+                    <div class="card-title">
+                        <span class="icon">📊</span> Analysis Response
+                    </div>
+                    <div id="responseContent">
+                        <div class="response-placeholder">
+                            <span class="response-placeholder__icon">🛡️</span>
+                            <span class="response-placeholder__text">Select a log file and ask a question to get started</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Security-Log-Analyser &mdash; Built by <strong>Ganesh</strong> | Powered by Ollama &amp; LangGraph</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

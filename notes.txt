@@ -1,0 +1,21 @@
+# Security-Log-Analyser — Project Notes
+# ======================================
+
+## TODOs
+- [ ] Add real-time log streaming from live data sources
+- [ ] Implement graph-based and statistical analysis of log data
+- [ ] Add automated responses (e.g., IP blocking, alert triggers)
+- [ ] Explore different embedding models for better accuracy
+- [ ] Experiment with chunk size for optimal retrieval
+- [ ] Multi-document analysis (cross-referencing logs)
+- [ ] Export analysis results to PDF/JSON
+
+## Configuration Tips
+- Switch models in .env: change OLLAMA_MODEL to phi3, mistral, etc.
+- Tune CHUNK_SIZE (default 500) for your log format
+- Adjust CHUNK_OVERLAP for better context continuity
+
+## Notes
+- FAISS is used as the vector store for fast local similarity search
+- Streaming is implemented via Server-Sent Events (SSE) in Flask
+- All processing happens locally — no data leaves the machine

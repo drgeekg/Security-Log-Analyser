@@ -1,0 +1,8 @@
+# Security-Log-Analyser — Dependencies
+
+flask
+python-dotenv
+langchain-core
+langchain-ollama
+langgraph
+rich
