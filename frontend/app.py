@@ -79,6 +79,35 @@ def upload_log():
     return jsonify({"message": f"File '{filename}' uploaded successfully", "filename": filename})
 
 
+@app.route("/api/generate", methods=["POST"])
+def generate_logs():
+    """Generate artificial tracking logs."""
+    try:
+        data = request.get_json(silent=True) or {}
+        count = int(data.get("count", 800))
+        attack_ratio = float(data.get("attack_ratio", 0.20))
+
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+        from logs.generate_logs import generate_log_file
+        
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"generated_logs_{ts}.md"
+        output_path = os.path.join(LOG_DIR, filename)
+        
+        generate_log_file(
+            output_path=output_path,
+            count=count,
+            days=7,
+            attack_ratio=attack_ratio,
+            title=f"Synthetic Logs - {ts}"
+        )
+        return jsonify({"message": "Logs generated", "filename": filename})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/quick-stats", methods=["POST"])
 def quick_stats():
     """

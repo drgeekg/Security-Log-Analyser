@@ -41,45 +41,76 @@ NORMAL_PAYLOAD_PATTERN = re.compile(
 
 
 def parse_log_line(line: str) -> Optional[Dict[str, Any]]:
-    """Parse a single log line into a structured record."""
+    """Parse a single log line into a structured record, with fallback for standard application logs."""
     line = line.strip()
     if not line or line.startswith('#'):
         return None
 
+    # First attempt: Web/HTTP Security Log Pattern
     match = LOG_LINE_PATTERN.match(line)
-    if not match:
-        return None
+    if match:
+        record = {
+            'timestamp': match.group('timestamp'),
+            'ip': match.group('ip'),
+            'user': match.group('user'),
+            'method': match.group('method'),
+            'endpoint': match.group('endpoint'),
+            'raw': line,
+        }
 
-    record = {
-        'timestamp': match.group('timestamp'),
-        'ip': match.group('ip'),
-        'user': match.group('user'),
-        'method': match.group('method'),
-        'endpoint': match.group('endpoint'),
-        'raw': line,
-    }
+        # Try to parse as normal HTTP response
+        payload = match.group('payload')
+        normal_match = NORMAL_PAYLOAD_PATTERN.match(payload)
 
-    # Try to parse as normal HTTP response
-    payload = match.group('payload')
-    normal_match = NORMAL_PAYLOAD_PATTERN.match(payload)
+        if normal_match:
+            record['status_code'] = int(normal_match.group('status_code'))
+            record['status_text'] = normal_match.group('status_text')
+            record['user_agent'] = normal_match.group('user_agent')
+            record['is_attack'] = False
+            record['attack_type'] = None
+            record['attack_description'] = None
+        else:
+            # It's an attack event (does not match normal HTTP layout)
+            record['status_code'] = None
+            record['status_text'] = None
+            record['user_agent'] = None
+            record['is_attack'] = True
+            record['attack_description'] = payload
+            record['attack_type'] = classify_attack(payload)
 
-    if normal_match:
-        record['status_code'] = int(normal_match.group('status_code'))
-        record['status_text'] = normal_match.group('status_text')
-        record['user_agent'] = normal_match.group('user_agent')
-        record['is_attack'] = False
-        record['attack_type'] = None
-        record['attack_description'] = None
     else:
-        # It's an attack event
-        record['status_code'] = None
-        record['status_text'] = None
-        record['user_agent'] = None
-        record['is_attack'] = True
-        record['attack_description'] = payload
-        record['attack_type'] = classify_attack(payload)
+        # Fallback: Generic Server / Application Log (e.g. Hadoop, Syslog)
+        time_match = re.search(r'(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})', line)
+        if not time_match:
+            return None  # Skip entirely if no timestamp can be found
+            
+        timestamp = time_match.group(1).replace('T', ' ')
+        
+        record = {
+            'timestamp': timestamp,
+            'ip': '0.0.0.0', # Default for internal app logs
+            'user': 'system',
+            'method': 'APP',
+            'endpoint': 'ApplicationLog',
+            'raw': line,
+            'status_code': 200,
+            'status_text': 'OK',
+            'user_agent': 'Internal System'
+        }
+        
+        # Determine if this generic log line contains an attack/exception natively
+        atk_type = classify_attack(line)
+        if atk_type != 'Unknown Attack':
+            record['is_attack'] = True
+            record['attack_type'] = atk_type
+            record['attack_description'] = line
+            record['status_code'] = None
+        else:
+            record['is_attack'] = False
+            record['attack_type'] = None
+            record['attack_description'] = None
 
-    # Parse timestamp
+    # Parse timestamp into a datetime object for aggregation
     try:
         record['datetime'] = datetime.strptime(record['timestamp'], '%Y-%m-%d %H:%M:%S')
     except ValueError:
@@ -110,8 +141,11 @@ ATTACK_PATTERNS = [
     (re.compile(r'DDoS', re.IGNORECASE), 'DDoS', 'High', 7.5),
     (re.compile(r'Credential\s*stuffing', re.IGNORECASE), 'Credential Stuffing', 'High', 7.5),
     (re.compile(r'Command\s*injection', re.IGNORECASE), 'Command Injection', 'High', 8.0),
-    (re.compile(r'Directory\s*traversal', re.IGNORECASE), 'Directory Traversal', 'High', 8.6),
+    (re.compile(r'Directory\s*traversal|\.\./\.\.', re.IGNORECASE), 'Directory Traversal', 'High', 8.6),
+    (re.compile(r'IDOR|Insecure\s*direct\s*object', re.IGNORECASE), 'IDOR', 'High', 7.2),
     (re.compile(r'XSS|Cross.?Site\s*Scripting', re.IGNORECASE), 'XSS', 'Medium', 6.1),
+    (re.compile(r'CSRF|Cross.?Site\s*Request', re.IGNORECASE), 'CSRF', 'Medium', 6.5),
+    (re.compile(r'SSRF|Server\s*Side\s*Request', re.IGNORECASE), 'SSRF', 'High', 8.2),
     (re.compile(r'Suspicious\s*file\s*upload.*shell\.php', re.IGNORECASE), 'Malicious Upload (Web Shell)', 'Critical', 9.8),
     (re.compile(r'Suspicious\s*file\s*upload.*backdoor', re.IGNORECASE), 'Malicious Upload (Backdoor)', 'Critical', 9.8),
     (re.compile(r'Suspicious\s*file\s*upload', re.IGNORECASE), 'Suspicious File Upload', 'High', 7.0),
@@ -120,8 +154,10 @@ ATTACK_PATTERNS = [
     (re.compile(r'DNS\s*tunneling', re.IGNORECASE), 'DNS Tunneling', 'High', 7.4),
     (re.compile(r'Session\s*hijacking', re.IGNORECASE), 'Session Hijacking', 'High', 7.5),
     (re.compile(r'Malware\s*signature', re.IGNORECASE), 'Malware Detected', 'Critical', 9.0),
-    (re.compile(r'Unauthorized\s*API', re.IGNORECASE), 'Unauthorized API Usage', 'Medium', 6.5),
+    (re.compile(r'Unauthorized\s*API|API\s*abuse', re.IGNORECASE), 'API Abuse', 'Medium', 6.5),
     (re.compile(r'Suspicious\s*outbound', re.IGNORECASE), 'Suspicious Outbound Connection', 'High', 7.4),
+    (re.compile(r'Cryptojacking|xmrig|coinbase', re.IGNORECASE), 'Cryptojacking', 'High', 7.8),
+    (re.compile(r'Default\s*credentials|admin/admin|root/root', re.IGNORECASE), 'Default Credentials Usage', 'High', 8.0),
 ]
 
 # CVSS lookup by attack type
@@ -137,6 +173,10 @@ MALICIOUS_USER_AGENTS = {
     'hydra': 'Password Cracker',
     'burpsuite': 'Web Security Testing Tool',
     'wpscan': 'WordPress Scanner',
+    'masscan': 'Mass Port Scanner',
+    'zmap': 'Network Scanner',
+    'python-requests': 'Automated Request Script',
+    'curl': 'Potential Automated Request',
 }
 
 
@@ -542,6 +582,32 @@ def build_report_context(
         lines.append("\n## ATTACK TIMELINE (daily)")
         for day, count in timeline['daily'].items():
             lines.append(f"  - {day}: {count} attacks")
+
+    # ── Raw Problematic Logs ─────────────────────────────────────
+    lines.append("\n## RAW PROBLEMATIC LOGS (For deep behavioral & payload context - Max 500 lines)")
+    
+    # Get malicious timestamps to include scanner probes
+    malicious_ua_timestamps = {a['timestamp'] for a in ua['malicious_agents']} if ua.get('malicious_agents') else set()
+    
+    problematic_lines = []
+    for r in records:
+        is_prob = r.get('is_attack') or r.get('status_code') == 401 or r.get('timestamp') in malicious_ua_timestamps
+        if is_prob:
+            problematic_lines.append(r.get('raw', ''))
+            
+    if len(problematic_lines) > 500:
+        lines.append(f"*(Sampled 500 lines out of {len(problematic_lines)} total problematic events)*")
+        # Uniform sampling to preserve timeline distribution
+        step = len(problematic_lines) / 500.0
+        sampled_lines = []
+        for i in range(500):
+            idx = int(i * step)
+            if idx < len(problematic_lines):
+                sampled_lines.append(problematic_lines[idx])
+        problematic_lines = sampled_lines
+
+    for raw_line in problematic_lines:
+        lines.append(raw_line)
 
     lines.append("\n" + "=" * 60)
 

@@ -142,6 +142,10 @@ def test_classify_attacks():
         ("Privilege escalation attempt by root", "Privilege Escalation"),
         ("Command injection attempt on /api/data", "Command Injection"),
         ("DNS tunneling activity detected from 203.0.113.1", "DNS Tunneling"),
+        ("Server Side Request Forgery attempt on webhook endpoint", "SSRF"),
+        ("Insecure direct object reference on user_id=123", "IDOR"),
+        ("API abuse detected: rate limit exceeded heavily", "API Abuse"),
+        ("Cryptojacking script detected in payload", "Cryptojacking"),
     ]
 
     for description, expected_type in tests:

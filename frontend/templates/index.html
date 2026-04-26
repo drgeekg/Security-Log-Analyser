@@ -6,7 +6,7 @@
     <meta name="description" content="Security-Log-Analyser — NLP-powered security log analysis with instant computed stats + LLM reporting">
     <title>Security-Log-Analyser</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
     <!-- Markdown Rendering -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <!-- Syntax Highlighting -->
@@ -17,118 +17,184 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toastContainer"></div>
 
-    <div class="app-container">
-        <!-- Header -->
-        <header class="header">
-            <div class="header__logo">
-                <div class="header__icon">🛡️</div>
-                <h1 class="header__title">Security-Log-Analyser</h1>
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="chat-sidebar">
+            <div class="sidebar-header">
+                <div class="header__logo">
+                    <div class="header__icon">🛡️</div>
+                    <h1 class="header__title">G-SOC Analyst</h1>
+                </div>
+                <button class="new-chat-btn" id="newChatBtn">
+                    <span class="icon">＋</span> New Session
+                </button>
             </div>
-            <p class="header__subtitle">NLP-computed analysis + LLM-powered reporting &mdash; instant stats, single LLM call</p>
-        </header>
 
-        <!-- Main Content -->
-        <main class="main-grid">
-            <!-- Sidebar -->
-            <aside class="sidebar">
-                <!-- Log Files Card -->
-                <div class="glass-card">
-                    <div class="card-title">
-                        <span class="icon">📁</span> Log Files
-                    </div>
-                    <ul class="file-list" id="fileList">
-                        <li class="file-item" style="justify-content: center; color: var(--text-muted); font-size: 0.85rem;">
-                            Loading files...
-                        </li>
-                    </ul>
+            <!-- Log Files Card -->
+            <div class="sidebar-section">
+                <div class="section-title">
+                    <span class="icon">📁</span> Available Logs
+                </div>
+                <ul class="file-list" id="fileList">
+                    <li class="file-item empty-state">Loading files...</li>
+                </ul>
+            </div>
+
+            <!-- Upload & Generate Card -->
+            <div class="sidebar-section toggle-upload" id="uploadToggleSection" style="margin-bottom: 24px;">
+                <div style="display:flex; gap: 8px; margin-bottom: 12px;">
+                    <button class="new-chat-btn" id="toggleGenConfigBtn" style="flex:1; background: rgba(139, 92, 246, 0.1); border-color: rgba(139, 92, 246, 0.4); color: var(--accent-secondary);">
+                        <span class="icon">⚙️</span> Gen Logs
+                    </button>
+                    <button class="new-chat-btn" id="uploadClickBtn" style="flex:1;" onclick="document.getElementById('fileInput').click()">
+                        <span class="icon">📤</span> Upload
+                    </button>
                 </div>
 
-                <!-- Upload Card -->
-                <div class="glass-card">
-                    <div class="card-title">
-                        <span class="icon">📤</span> Upload Log File
+                <!-- Generate Logs Custom Config Panel -->
+                <div id="genConfigPanel" style="display: none; background: rgba(0,0,0,0.2); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 12px; border: 1px solid var(--border-light);">
+                    <div style="margin-bottom: 8px;">
+                        <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Log Count (Lines)</label>
+                        <input type="number" id="genCount" value="500" min="10" max="10000" style="width: 100%; background: var(--bg-input); border: 1px solid var(--border-light); color: var(--text-primary); padding: 6px; border-radius: var(--radius-sm); font-size: 0.85rem;">
                     </div>
-                    <div class="upload-area" id="uploadArea">
-                        <span class="upload-area__icon">☁️</span>
-                        <p class="upload-area__text">
-                            Drag &amp; drop or <strong>browse</strong>
-                        </p>
-                        <input type="file" id="fileInput" accept=".md,.txt,.log,.csv">
+                    <div style="margin-bottom: 12px;">
+                        <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Attack Ratio (0.0 - 1.0)</label>
+                        <input type="number" id="genAttackRatio" value="0.15" step="0.05" min="0" max="1" style="width: 100%; background: var(--bg-input); border: 1px solid var(--border-light); color: var(--text-primary); padding: 6px; border-radius: var(--radius-sm); font-size: 0.85rem;">
+                    </div>
+                    <button id="generateLogsSubmitBtn" class="new-chat-btn" style="width: 100%; justify-content: center; background: var(--accent-primary); color: white; border: none;">
+                        Run Generator
+                    </button>
+                </div>
+
+                <div class="upload-area" id="uploadArea">
+                    <span class="upload-area__icon">☁️</span>
+                    <p class="upload-area__text">Drag & drop or <strong>browse</strong></p>
+                    <input type="file" id="fileInput" accept=".md,.txt,.log,.csv" style="display:none;">
+                </div>
+            </div>
+            
+            <div class="sidebar-footer">
+                <div class="status-bar status-bar--idle" id="statusBar">
+                    <span class="status-dot"></span>
+                    <span id="statusText">System Ready</span>
+                </div>
+                <p>Security-Log-Analyser &mdash; NLP + LLM Engine</p>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-main">
+            <!-- Chat Feed -->
+            <div class="chat-feed" id="chatFeed">
+                <!-- Welcome View (Visible initially) -->
+                <div class="welcome-view" id="welcomeView">
+                    <div class="welcome-icon">🛡️</div>
+                    <h2>How can I help you secure your systems today?</h2>
+                    <p>Select a log file from the sidebar to instantly compute NLP statistics, then ask me to perform a deep analysis.</p>
+                    
+                    <div class="quick-actions-grid" id="quickActionsGrid">
+                        <button class="quick-action-card" data-query="Provide a comprehensive security analysis of all logs">
+                            <span class="icon">🔍</span>
+                            <h3>Full Analysis</h3>
+                            <p>Complete review of all log entries</p>
+                        </button>
+                        <button class="quick-action-card" data-query="List all failed login attempts with IP addresses and targeted users">
+                            <span class="icon">🚫</span>
+                            <h3>Failed Logins</h3>
+                            <p>Identify unauthorized access attempts</p>
+                        </button>
+                        <button class="quick-action-card" data-query="Detect any brute force or DDoS attacks, list source IPs and frequency">
+                            <span class="icon">⚡</span>
+                            <h3>Brute Force / DDoS</h3>
+                            <p>Highlight potential flooding attacks</p>
+                        </button>
+                        <button class="quick-action-card" data-query="Identify SQL injection and XSS attempts with details">
+                            <span class="icon">💉</span>
+                            <h3>Injection Attacks</h3>
+                            <p>Find web vulnerability exploits</p>
+                        </button>
+                        <button class="quick-action-card" data-query="Identify any Malicious Uploads or Cryptojacking/mining scripts in the logs">
+                            <span class="icon">⛏️</span>
+                            <h3>Cryptominers & Malware</h3>
+                            <p>Find illicit mining or shells</p>
+                        </button>
+                        <button class="quick-action-card" data-query="Look for API abuse, excessive rate limits passing, or aggressive scraping">
+                            <span class="icon">🤖</span>
+                            <h3>API Abuse & Bots</h3>
+                            <p>Identify scrapers and scanners</p>
+                        </button>
+                        <button class="quick-action-card" data-query="Analyze for Path Traversal, SSRF, or IDOR exploit attempts">
+                            <span class="icon">🔓</span>
+                            <h3>Access Flaws</h3>
+                            <p>Check for SSRF, IDOR, Traversal</p>
+                        </button>
+                        <button class="quick-action-card" data-query="Check for usage of default credentials like admin/admin or root/root">
+                            <span class="icon">🔑</span>
+                            <h3>Default Credentials</h3>
+                            <p>Identify lazy admin probing</p>
+                        </button>
                     </div>
                 </div>
 
-                <!-- Instant Stats Panel (appears after file select) -->
-                <div class="glass-card stats-panel" id="statsPanel" style="display: none;">
-                    <div class="card-title">
-                        <span class="icon">⚡</span> Instant NLP Stats
-                        <span class="stats-badge" id="statsTime"></span>
+                <!-- Messages will be appended here -->
+            </div>
+
+            <!-- Chat Input Area -->
+            <div class="chat-input-area">
+                <div class="chat-input-wrapper">
+                    <textarea
+                        class="chat-input"
+                        id="queryInput"
+                        placeholder="Select a log file first to start analysis..."
+                        rows="1"
+                        disabled
+                    ></textarea>
+                    <button class="chat-submit" id="querySubmit" disabled title="Send message">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    </button>
+                </div>
+                <div class="chat-footer-text">
+                    G-SOC Analyst leverages deterministic NLP engines and LLM narrative reporting. Responses are AI-generated and should be verified.
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Templates for JavaScript injection -->
+    <template id="tpl-message-user">
+        <div class="message message--user fade-in">
+            <div class="message__avatar">U</div>
+            <div class="message__content">{{content}}</div>
+        </div>
+    </template>
+
+    <template id="tpl-message-llm">
+        <div class="message message--llm fade-in">
+            <div class="message__avatar">🛡️</div>
+            <div class="message__content markdown-body"></div>
+        </div>
+    </template>
+
+    <template id="tpl-message-nlp">
+        <div class="message message--system fade-in">
+            <div class="message__avatar">⚡</div>
+            <div class="message__content">
+                <div class="nlp-card">
+                    <div class="nlp-card__header">
+                        <span>NLP Analysis Complete</span>
+                        <span class="nlp-time badge-success">{{time}}s</span>
                     </div>
-                    <div class="stats-grid" id="statsGrid">
+                    <div class="nlp-stats-grid">
+                        <!-- Populated by JS -->
+                    </div>
+                    <div class="nlp-attack-breakdown">
                         <!-- Populated by JS -->
                     </div>
                 </div>
-            </aside>
+            </div>
+        </div>
+    </template>
 
-            <!-- Query Panel -->
-            <section class="query-panel">
-                <!-- Query Input Card -->
-                <div class="glass-card">
-                    <div class="card-title">
-                        <span class="icon">🔎</span> Query Analysis
-                    </div>
-
-                    <!-- Status Bar -->
-                    <div class="status-bar status-bar--idle" id="statusBar">
-                        <span class="status-dot"></span>
-                        <span id="statusText">Select a log file to begin</span>
-                    </div>
-
-                    <!-- Query Input -->
-                    <div class="query-input-wrapper">
-                        <textarea
-                            class="query-input"
-                            id="queryInput"
-                            placeholder="Ask about your security logs... e.g. 'What suspicious activities were detected?'"
-                            rows="1"
-                            disabled
-                        ></textarea>
-                        <button class="query-submit" id="querySubmit" disabled title="Analyze">
-                            ▶
-                        </button>
-                    </div>
-
-                    <!-- Quick Action Buttons -->
-                    <div class="quick-actions" id="quickActions" style="margin-top: 12px;">
-                        <button class="quick-action-btn" data-query="Provide a comprehensive security analysis of all logs">🔍 Full Analysis</button>
-                        <button class="quick-action-btn" data-query="List all failed login attempts with IP addresses and targeted users">🚫 Failed Logins</button>
-                        <button class="quick-action-btn" data-query="Detect any brute force or DDoS attacks, list source IPs and frequency">⚡ Brute Force / DDoS</button>
-                        <button class="quick-action-btn" data-query="Identify SQL injection and XSS attempts with details">💉 Injection Attacks</button>
-                        <button class="quick-action-btn" data-query="What IPs performed the most attack attempts? Profile their behavior">🌐 Top Attacker IPs</button>
-                        <button class="quick-action-btn" data-query="Identify all suspicious file uploads and potential malware">📁 Malicious Uploads</button>
-                    </div>
-                </div>
-
-                <!-- Response Card -->
-                <div class="glass-card response-area" id="responseArea">
-                    <div class="card-title">
-                        <span class="icon">📊</span> Analysis Response
-                    </div>
-                    <div id="responseContent">
-                        <div class="response-placeholder">
-                            <span class="response-placeholder__icon">🛡️</span>
-                            <span class="response-placeholder__text">Select a log file and ask a question to get started</span>
-                        </div>
-                    </div>
-                </div>
-            </section>
-        </main>
-
-        <!-- Footer -->
-        <footer class="footer">
-            <p>Security-Log-Analyser &mdash; Built by <strong>Ganesh</strong> | NLP Engine + Ollama LLM</p>
-        </footer>
-    </div>
-
-    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}?v=2"></script>
 </body>
 </html>
