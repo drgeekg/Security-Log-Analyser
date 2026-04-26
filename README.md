@@ -1,20 +1,21 @@
 # 🛡️ Security-Log-Analyser
 
-> **AI-powered security log analysis using RAG (Retrieval-Augmented Generation) and Ollama LLM**
+> **High-performance security log analysis using hybrid NLP computation and Ollama LLM**
 
-An intelligent security log analysis tool that leverages a local LLM to act as a Level 1 SOC (Security Operations Center) Analyst. Upload your security logs, ask natural language questions, and get real-time streaming analysis — all running locally on your machine.
+An intelligent security log analysis tool that leverages a deterministic NLP engine for instant parsing and statistics, followed by a local LLM to act as a Level 1 SOC (Security Operations Center) Analyst. Upload your security logs, get instant attack metrics, and receive a comprehensive, real-time streaming report — all running locally on your machine.
 
 ---
 
 ## ✨ Features
 
-- 🔍 **RAG-Powered Analysis** — Retrieval-Augmented Generation for context-aware log analysis
-- 🤖 **Local LLM via Ollama** — Runs entirely on your machine, no data leaves your system
-- ⚡ **Real-Time Streaming** — Token-by-token response streaming for instant feedback
-- 🎨 **Modern Web UI** — Premium dark-themed Flask interface with glassmorphism design
-- 📤 **Drag & Drop Upload** — Easily upload new log files for analysis
-- 🎯 **Quick Actions** — One-click common security queries (suspicious activities, failed logins, DDoS, etc.)
-- 🔧 **Fully Configurable** — All settings in a `.env` file (model, chunk size, port, etc.)
+- ⚡ **Hybrid Architecture** — Instant pure-Python NLP computation for parsing and statistics, dropping analysis time from 45 minutes to < 2 minutes.
+- 📊 **Instant Metrics Panel** — Instantly view total logs, attack ratio, failed logins, unique IPs, and attack breakdowns as soon as a file is selected.
+- 🤖 **Local LLM via Ollama** — A single LLM call synthesizes the final report. Runs entirely on your machine; no data leaves your system.
+- 🌊 **Real-Time Streaming** — Token-by-token response streaming for the final narrative report.
+- 🎨 **Modern Web UI** — Premium dark-themed Flask interface with glassmorphism design.
+- 📤 **Drag & Drop Upload** — Easily upload new log files for analysis.
+- 🎯 **Quick Actions** — One-click common security queries (suspicious activities, failed logins, DDoS, etc.).
+- 🔧 **Fully Configurable** — Settings in a `.env` file (model, port, stats-only mode, etc.).
 
 ---
 
@@ -22,13 +23,12 @@ An intelligent security log analysis tool that leverages a local LLM to act as a
 
 | Component | Technology |
 |-----------|------------|
-| **LLM** | Ollama (llama3.1) |
-| **Embeddings** | Ollama (nomic-embed-text) |
-| **RAG Framework** | LangChain |
-| **Vector Store** | FAISS |
+| **LLM** | Ollama (gpt-oss:120b-cloud or llama-based models) |
+| **NLP Engine** | Pure Python (Regex, collections, computation) |
+| **LLM Integration** | LangChain |
 | **Web Framework** | Flask |
 | **Frontend** | HTML, CSS, JavaScript (vanilla) |
-| **Language** | Python |
+| **Language** | Python 3.8+ |
 
 ---
 
@@ -36,25 +36,24 @@ An intelligent security log analysis tool that leverages a local LLM to act as a
 
 ```
 Security-Log-Analyser/
-├── main.py                  # Core RAG engine (streaming + non-streaming)
-├── unit_testing.py          # Automated test suite
+├── nlp_engine.py            # Core NLP computation (parsing, stats, scoring)
+├── main.py                  # Pipeline manager (NLP + single LLM call)
+├── unit_testing.py          # Deterministic test suite for the NLP engine
 ├── requirements.txt         # Python dependencies
 ├── .env                     # Environment configuration
-├── notes.txt                # Project notes & TODOs
 ├── logs/                    # Log files for analysis
 │   ├── logs1.md             # Sample log data
 │   ├── logs2.md             # Sample log data
-│   ├── generate_logs.py     # Batch log generator script
-│   └── live_logs.py         # Live log streaming server
+│   └── generate_logs.py     # Batch log generator script
 └── frontend/                # Flask web application
-    ├── app.py               # Flask server with SSE streaming
+    ├── app.py               # Flask server with SSE streaming & /api/quick-stats
     ├── templates/
     │   └── index.html       # Main dashboard
     └── static/
         ├── css/
         │   └── style.css    # Premium dark theme
         └── js/
-            └── app.js       # Client-side streaming logic
+            └── app.js       # Client-side streaming & stats logic
 ```
 
 ---
@@ -69,8 +68,8 @@ Security-Log-Analyser/
 ### 1. Pull Required Models
 
 ```bash
+# Example model for the report generation
 ollama pull llama3.1
-ollama pull nomic-embed-text
 ```
 
 ### 2. Set Up Virtual Environment
@@ -89,13 +88,13 @@ pip install -r requirements.txt
 
 ### 4. Configure (Optional)
 
-Edit the `.env` file to change models, port, or RAG settings:
+Edit the `.env` file to change models or modes:
 
 ```env
-OLLAMA_MODEL=llama3.1
-OLLAMA_EMBED_MODEL=nomic-embed-text
+OLLAMA_BASE_URL=http://localhost:11434
+REPORT_MODEL=llama3.1
+NLP_STATS_ONLY=false
 FLASK_PORT=5000
-CHUNK_SIZE=500
 ```
 
 ### 5. Run the Application
@@ -110,14 +109,15 @@ Open your browser and navigate to **http://localhost:5000**
 
 ## 💡 Usage
 
-1. **Select a log file** from the sidebar (log files from the `logs/` directory are automatically listed)
-2. **Type a query** or click a **Quick Action** button
-3. **Watch the streaming response** appear token-by-token as the AI analyses your logs
-4. **Upload new logs** via drag & drop or the file browser
+1. **Select a log file** from the sidebar (log files from the `logs/` directory are automatically listed).
+2. **Review Instant Stats** — Watch the sidebar instantly populate with NLP-computed metrics like total entries, attack counts, and IP behavior.
+3. **Type a query** or click a **Quick Action** button.
+4. **Watch the streaming response** appear token-by-token as the AI writes the final narrative report based on the NLP data.
+5. **Upload new logs** via drag & drop or the file browser.
 
 ### Example Queries
 
-- *"Summarize all suspicious activities in the logs"*
+- *"Provide a comprehensive security analysis of all logs"*
 - *"List all failed login attempts with IP addresses"*
 - *"Detect any brute force or DDoS attacks"*
 - *"What IPs performed the most attack attempts?"*
@@ -125,29 +125,17 @@ Open your browser and navigate to **http://localhost:5000**
 
 ---
 
-## 📸 Screenshots
-
-| Dashboard | Analysis Streaming |
-|-----------|--------------------|
-| ![Screenshot 1](Static/Screenshot%202026-04-07%20015439.png) | ![Screenshot 2](Static/Screenshot%202026-04-07%20015502.png) |
-
-| Quick Actions | Rendered Markdown Report |
-|---------------|--------------------------|
-| ![Screenshot 3](Static/Screenshot%202026-04-07%20015548.png) | ![Screenshot 4](Static/Screenshot%202026-04-07%20015600.png) |
-
----
-
 ## ⚙️ How It Works
 
 ```
-Log File → Chunking → Query Splitting (Qwen) → Parallel Chunk Analysis (Qwen) → Synthesis (120b) → Streaming
+Log File → NLP Parsing → Attack Detection & Stats Computation → Single LLM Synthesis O(1) → Streaming Report
 ```
 
-1. **Log Ingestion** — Security logs are loaded as raw text and split into manageable ~100-line chunks.
-2. **Query Splitting** — A fast LLM breaks the user's natural language question into specific, focused sub-queries.
-3. **Parallel Analysis** — The fast LLM acts as a Level 1 SOC Analyst, scanning log chunks for evidence related to each sub-query.
-4. **Synthesis** — A powerful, logic-heavy LLM merges all sub-analyses into a comprehensive security report.
-5. **Streaming Output** — The final markdown report stream is rendered in real-time in the browser.
+1. **Log Ingestion** — Security logs are loaded as raw text.
+2. **NLP Engine** — Pure Python logic deterministicly parses lines, detects severe attacks using complex RegExp/keywords (SQLi, RCE, XSS, DDoS), and aggregates statistical metrics (frequency, IPs).
+3. **Threat Scoring** — The NLP engine ranks threats using a CVSS-based computation formula considering severity, IP distribution, and frequency.
+4. **LLM Synthesis** — A single, structured prompt containing the precise computed data is fed into the local LLM.
+5. **Streaming Output** — The LLM acts as a Senior SOC analyst, formatting the data into an authoritative, narrative markdown report that streams to the frontend.
 
 ---
 
@@ -164,45 +152,23 @@ python logs/generate_logs.py --attack-ratio 0.4           # 40% attack events
 python logs/generate_logs.py --start-date 2024-01-01 --days 30 --count 5000
 ```
 
-### Live Log Streaming Server
-
-Run a live log generator with a REST API for real-time analysis:
-
-```bash
-python logs/live_logs.py                    # Starts on port 5001, 1 log/sec
-python logs/live_logs.py --rate 5 --port 5001
-```
-
-**API Endpoints:**
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/stream` | GET | SSE stream of real-time logs |
-| `/api/recent?n=50` | GET | Get recent log entries |
-| `/api/status` | GET | Server status info |
-| `/api/start` | POST | Start log generation |
-| `/api/stop` | POST | Stop log generation |
-| `/api/config` | POST | Update rate/attack ratio |
-
-The live server also writes to `logs/live_feed.md` which can be analysed in the main UI.
-
 ---
 
 ## 🧪 Testing
 
-Run the automated test suite:
+Run the automated test suite to validate the pure-computation NLP engine:
 
 ```bash
 python unit_testing.py
 ```
 
-Tests validate the RAG pipeline's accuracy against known security events in the logs.
+Tests deterministically validate the NLP pipeline's parsing accuracy, malicious agent detection, statistic aggregation, and threat scoring without ever calling an LLM.
 
 ---
 
 ## 📜 License
 
-This project is licensed under the MIT License.
+This project is licensed under the GNU General Public License v2.0 (GPL-2.0). See the [LICENSE](LICENSE) file for more details.
 
 ---
 

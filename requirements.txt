@@ -4,5 +4,4 @@ flask
 python-dotenv
 langchain-core
 langchain-ollama
-langgraph
 rich

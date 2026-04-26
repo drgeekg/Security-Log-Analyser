@@ -1,11 +1,13 @@
 """
 Security-Log-Analyser — Flask Web Application
 Serves the modern UI and provides API endpoints for log analysis with streaming.
+Now includes /api/quick-stats for instant NLP-computed metrics (no LLM).
 """
 
 import os
 import sys
 import json
+import time
 
 # Add parent directory to path so we can import main.py
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -17,7 +19,7 @@ from dotenv import load_dotenv
 # Load .env from project root
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-from main import load_log_file, list_log_files, query_logs_stream, LOG_DIRECTORY
+from main import load_log_file, list_log_files, query_logs_stream, get_quick_stats, LOG_DIRECTORY
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB upload limit
@@ -77,12 +79,43 @@ def upload_log():
     return jsonify({"message": f"File '{filename}' uploaded successfully", "filename": filename})
 
 
+@app.route("/api/quick-stats", methods=["POST"])
+def quick_stats():
+    """
+    Run NLP analysis only (no LLM call) and return computed stats instantly.
+    This gives the user immediate insight while the full report streams.
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+
+    filename = data.get("filename")
+    if not filename:
+        return jsonify({"error": "No log file specified"}), 400
+
+    try:
+        log_text = _get_log_text(filename)
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception as e:
+        return jsonify({"error": f"Error loading file: {str(e)}"}), 500
+
+    start = time.time()
+    stats = get_quick_stats(log_text)
+    elapsed = round(time.time() - start, 3)
+
+    return jsonify({
+        "stats": stats,
+        "computation_time_seconds": elapsed,
+    })
+
+
 @app.route("/api/analyze", methods=["POST"])
 def analyze():
     """
     Analyze a log file with a query.
     Returns a streaming SSE response for real-time token display.
-    Uses multi-LLM pipeline: split query → chunk analysis → synthesis.
+    Pipeline: NLP computation (instant) → Single LLM report (streaming).
     """
     data = request.get_json()
     if not data:

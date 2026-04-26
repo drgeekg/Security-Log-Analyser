@@ -1,6 +1,7 @@
 /**
  * Security-Log-Analyser — Frontend Application
- * Handles file selection, upload, query submission, and SSE streaming.
+ * Handles file selection, upload, query submission, SSE streaming,
+ * and instant NLP stats display.
  */
 
 (function () {
@@ -29,6 +30,9 @@
     const statusText = document.getElementById("statusText");
     const quickActions = document.getElementById("quickActions");
     const toastContainer = document.getElementById("toastContainer");
+    const statsPanel = document.getElementById("statsPanel");
+    const statsGrid = document.getElementById("statsGrid");
+    const statsTime = document.getElementById("statsTime");
 
     let selectedFile = null;
     let isAnalysing = false;
@@ -133,6 +137,99 @@
         querySubmit.disabled = false;
 
         setStatus("ready", `Ready — ${filename} selected`);
+
+        // Fetch instant NLP stats
+        fetchQuickStats(filename);
+    }
+
+    // ── Fetch Quick NLP Stats ────────────────
+    async function fetchQuickStats(filename) {
+        statsPanel.style.display = "block";
+        statsGrid.innerHTML = `
+            <div class="stats-loading">
+                <div class="loading-dots"><span></span><span></span><span></span></div>
+                <span>Computing NLP stats...</span>
+            </div>`;
+        statsTime.textContent = "";
+
+        try {
+            const res = await fetch("/api/quick-stats", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ filename }),
+            });
+
+            if (!res.ok) {
+                throw new Error("Failed to fetch stats");
+            }
+
+            const data = await res.json();
+            const s = data.stats.summary;
+
+            statsTime.textContent = `${data.computation_time_seconds}s`;
+
+            statsGrid.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-value">${s.total_log_entries.toLocaleString()}</div>
+                    <div class="stat-label">Total Entries</div>
+                </div>
+                <div class="stat-card stat-card--danger">
+                    <div class="stat-value">${s.total_attacks.toLocaleString()}</div>
+                    <div class="stat-label">Attacks (${s.attack_ratio}%)</div>
+                </div>
+                <div class="stat-card stat-card--warning">
+                    <div class="stat-value">${s.total_failed_logins.toLocaleString()}</div>
+                    <div class="stat-label">Failed Logins</div>
+                </div>
+                <div class="stat-card stat-card--info">
+                    <div class="stat-value">${s.unique_ips}</div>
+                    <div class="stat-label">Unique IPs</div>
+                </div>
+                <div class="stat-card stat-card--info">
+                    <div class="stat-value">${s.unique_attacker_ips}</div>
+                    <div class="stat-label">Attacker IPs</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${Object.keys(data.stats.attack_breakdown).length}</div>
+                    <div class="stat-label">Attack Types</div>
+                </div>
+            `;
+
+            // Show attack breakdown below stats
+            const breakdown = data.stats.attack_breakdown;
+            if (Object.keys(breakdown).length > 0) {
+                const breakdownHtml = Object.entries(breakdown)
+                    .map(([type, count]) => `
+                        <div class="attack-row">
+                            <span class="attack-type">${escapeHtml(type)}</span>
+                            <span class="attack-count">${count}</span>
+                        </div>`)
+                    .join("");
+
+                statsGrid.innerHTML += `
+                    <div class="stat-divider"></div>
+                    <div class="attack-breakdown">
+                        <div class="attack-breakdown-title">Attack Breakdown</div>
+                        ${breakdownHtml}
+                    </div>`;
+            }
+
+            // Show malicious agents count if any
+            const malCount = data.stats.user_agents.malicious_count;
+            if (malCount > 0) {
+                statsGrid.innerHTML += `
+                    <div class="stat-card stat-card--danger" style="grid-column: 1 / -1;">
+                        <div class="stat-value">⚠️ ${malCount}</div>
+                        <div class="stat-label">Malicious User Agent Entries (sqlmap, Nikto, Nmap...)</div>
+                    </div>`;
+            }
+
+        } catch (err) {
+            statsGrid.innerHTML = `
+                <div style="color: var(--danger); font-size: 0.85rem; text-align: center; padding: 8px;">
+                    Could not compute stats
+                </div>`;
+        }
     }
 
     // ── Upload File ──────────────────────────
@@ -169,7 +266,7 @@
         querySubmit.disabled = true;
         queryInput.disabled = true;
 
-        setStatus("loading", "Splitting query & analysing log chunks...");
+        setStatus("loading", "NLP analysis (instant) → generating LLM report...");
 
         // Show loading animation
         responseContent.innerHTML = `
@@ -177,7 +274,7 @@
                 <span></span><span></span><span></span>
             </div>
             <span style="color: var(--text-muted); font-size: 0.85rem; margin-left: 12px;">
-                Splitting query → analysing chunks → synthesising...
+                NLP computation complete → streaming LLM report...
             </span>`;
 
         try {
@@ -201,7 +298,7 @@
             const decoder = new TextDecoder();
             let buffer = "";
 
-            setStatus("loading", "Streaming synthesis...");
+            setStatus("loading", "Streaming LLM report...");
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -237,7 +334,6 @@
                                 });
                             }
                         } catch (parseErr) {
-                            // Skip malformed lines
                             if (parseErr.message !== "Analysis failed") {
                                 console.warn("Parse error:", parseErr);
                             } else {

@@ -1,147 +1,78 @@
 """
-Security-Log-Analyser — Core Multi-LLM Analysis Engine
-Backend using LangGraph with query splitting + direct log injection.
+Security-Log-Analyser — Core Analysis Engine (NLP-First Architecture)
+Hybrid NLP-computation + LLM pipeline for fast, accurate log analysis.
 
 Pipeline:
-  1. Split user query into focused sub-queries  (fast model)
-  2. Analyze each log chunk per sub-query         (fast model)
-  3. Synthesize all analyses into final answer     (powerful model)
+  1. NLP Engine: Parse → Detect → Aggregate → Score  (instant, ~1-3 seconds)
+  2. LLM Synthesis: Generate narrative report            (1 call, ~30-90 seconds)
+
+This replaces the previous multi-LLM pipeline (17+ calls, ~45 minutes)
+with a single LLM call. All counting, detection, and statistics are
+computed deterministically by the NLP engine.
 """
 
 import os
 import json
-import re
-from typing import List
-from typing_extensions import TypedDict
 from dotenv import load_dotenv
 
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langgraph.graph import StateGraph, START, END
+
+import nlp_engine
 
 # Load environment variables
 load_dotenv()
 
 # ── Configuration from .env ─────────────────────────────────────────
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-ANALYSIS_MODEL = os.getenv(
-    "ANALYSIS_MODEL",
-    "radenadri/Qwen3.5-0.8B-Claude-4.6-Opus-Reasoning-Distilled-GGUF",
-)
-SYNTHESIS_MODEL = os.getenv("SYNTHESIS_MODEL", "gpt-oss:120b-cloud")
-LOG_CHUNK_LINES = int(os.getenv("LOG_CHUNK_LINES", "100"))
+REPORT_MODEL = os.getenv("REPORT_MODEL", "gpt-oss:120b-cloud")
 LOG_DIRECTORY = os.getenv("LOG_DIRECTORY", "./logs")
-
-
-# ── LangGraph State Schema ─────────────────────────────────────────
-class AnalysisState(TypedDict):
-    question: str
-    log_text: str
-    log_chunks: List[str]
-    sub_queries: List[str]
-    chunk_analyses: List[str]
-    answer: str
+NLP_STATS_ONLY = os.getenv("NLP_STATS_ONLY", "false").lower() == "true"
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  SYSTEM PROMPTS — one for each LLM call type
+#  REPORT GENERATION PROMPT — Single LLM call
 # ═══════════════════════════════════════════════════════════════════
 
-# ── 1. Query Splitter (fast model) ─────────────────────────────────
-QUERY_SPLITTER_PROMPT = ChatPromptTemplate.from_messages([
+REPORT_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
-     "You are a query decomposition assistant for a Security Operations Center. "
-     "Your ONLY job is to break a user's security question into 2-4 focused, "
-     "independent sub-queries that together fully cover the original question.\n\n"
-     "Rules:\n"
-     "- Each sub-query must be self-contained and specific.\n"
-     "- Output ONLY a valid JSON array of strings — no commentary, no markdown.\n"
-     "- If the question is already simple/atomic, return it as a single-item array.\n\n"
-     "Example:\n"
-     "  Input:  \"What brute force and SQL injection attacks happened, and which IPs are involved?\"\n"
-     "  Output: [\"How many brute force attacks were detected and from which IPs?\", "
-     "\"How many SQL injection attempts were detected and from which IPs?\"]"),
-    ("human", "{question}"),
-])
-
-# ── 2. Chunk Analyst (fast model) ──────────────────────────────────
-CHUNK_ANALYST_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You are a Level 1 SOC (Security Operations Center) Analyst performing "
-     "targeted log analysis. You will receive a chunk of raw security logs and "
-     "a specific analysis question.\n\n"
-     "Instructions:\n"
-     "- Carefully scan every log line in the chunk for evidence relevant to the question.\n"
-     "- Extract exact IPs, timestamps, usernames, attack types, status codes, and counts.\n"
-     "- If no relevant evidence is found in this chunk, say \"No relevant findings in this chunk.\"\n"
-     "- Be precise and factual — do NOT make up information.\n"
-     "- Keep your response concise: bullet points with hard evidence only."),
+     "You are a Senior SOC (Security Operations Center) Analyst writing a comprehensive "
+     "security report. You will receive pre-computed NLP analysis data containing exact "
+     "counts, IP addresses, attack classifications, threat scores, and statistical findings "
+     "from security logs.\n\n"
+     "Your job is to:\n"
+     "1. Write a professional, well-structured security report based on the data provided.\n"
+     "2. DO NOT re-count or re-analyze — the numbers given are exact (computed, not estimated).\n"
+     "3. Use the threat rankings to prioritize your findings.\n"
+     "4. Highlight the most critical threats and provide actionable recommendations.\n"
+     "5. If the user asked a specific question, answer it directly using the data.\n"
+     "6. Use markdown formatting for headers, tables, and lists.\n"
+     "7. Include an Executive Summary, Detailed Findings, Threat Prioritization, and Recommendations.\n"
+     "8. Be authoritative, precise, and actionable."),
     ("human",
-     "=== LOG CHUNK ===\n{log_chunk}\n=== END CHUNK ===\n\n"
-     "Analysis Question: {sub_query}\n\n"
-     "Findings:"),
-])
-
-# ── 3. Synthesis (powerful model) ──────────────────────────────────
-SYNTHESIS_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You are a Senior SOC Analyst synthesizing findings from multiple log analysis passes. "
-     "You will receive the original user question and a collection of sub-analyses that "
-     "were performed across different log chunks and sub-queries.\n\n"
-     "Instructions:\n"
-     "- Merge, deduplicate, and reconcile all findings into one coherent security report.\n"
-     "- Provide accurate counts, specific IPs, timestamps, and attack classifications.\n"
-     "- Highlight the most critical threats and recommend immediate actions.\n"
-     "- If evidence is contradictory, note the discrepancy.\n"
-     "- Structure your response clearly with sections if appropriate.\n"
-     "- Be authoritative, precise, and actionable."),
-    ("human",
-     "Original Question: {question}\n\n"
-     "=== COLLECTED ANALYSES ===\n{analyses}\n=== END ANALYSES ===\n\n"
-     "Comprehensive Security Analysis:"),
+     "User Question: {question}\n\n"
+     "{analysis_data}\n\n"
+     "Write a comprehensive security report based on the above NLP-computed analysis data:"),
 ])
 
 
-# ── Helper factories ───────────────────────────────────────────────
-def get_analysis_llm(streaming=False):
-    """Create a ChatOllama instance for the fast analysis model (Qwen)."""
+# ── Helper: LLM factory ────────────────────────────────────────────
+def get_report_llm(streaming=False):
+    """Create a ChatOllama instance for report generation."""
     return ChatOllama(
-        model=ANALYSIS_MODEL,
-        base_url=OLLAMA_BASE_URL,
-        streaming=streaming,
-        temperature=0.1,
-    )
-
-
-def get_synthesis_llm(streaming=False):
-    """Create a ChatOllama instance for the powerful synthesis model."""
-    return ChatOllama(
-        model=SYNTHESIS_MODEL,
+        model=REPORT_MODEL,
         base_url=OLLAMA_BASE_URL,
         streaming=streaming,
         temperature=0.2,
     )
 
 
-# ── Log loading & chunking ────────────────────────────────────────
+# ── Log loading & file listing ──────────────────────────────────────
 def load_log_file(file_path):
     """Read the raw text content of a log file."""
     with open(file_path, "r", encoding="utf-8") as f:
         return f.read()
-
-
-def chunk_log_text(log_text, max_lines=None):
-    """Split raw log text into chunks of `max_lines` lines each."""
-    if max_lines is None:
-        max_lines = LOG_CHUNK_LINES
-    lines = log_text.splitlines()
-    chunks = []
-    for i in range(0, len(lines), max_lines):
-        chunk = "\n".join(lines[i : i + max_lines])
-        if chunk.strip():
-            chunks.append(chunk)
-    return chunks
 
 
 def list_log_files(directory=None):
@@ -156,158 +87,84 @@ def list_log_files(directory=None):
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  LangGraph Pipeline — Split → Analyze → Synthesize
+#  ANALYSIS PIPELINE — NLP + Single LLM Call
 # ═══════════════════════════════════════════════════════════════════
 
-def _build_analysis_graph(streaming=False):
+def analyze_logs(log_text: str, query: str) -> dict:
     """
-    Build a compiled LangGraph StateGraph for multi-LLM analysis.
-
-    Nodes:  chunk_logs  →  split_query  →  analyze_chunks  →  synthesize
+    Run the full NLP analysis pipeline.
+    Returns the NLP-computed stats, threats, and context.
     """
-    analysis_llm = get_analysis_llm(streaming=False)   # always non-streaming for intermediate steps
-    synthesis_llm = get_synthesis_llm(streaming=streaming)
-
-    splitter_chain = QUERY_SPLITTER_PROMPT | analysis_llm | StrOutputParser()
-    analyst_chain = CHUNK_ANALYST_PROMPT | analysis_llm | StrOutputParser()
-    synthesis_chain = SYNTHESIS_PROMPT | synthesis_llm | StrOutputParser()
-
-    # ── Node: chunk_logs ─────────────────────────────────────────
-    def chunk_logs(state: AnalysisState) -> dict:
-        chunks = chunk_log_text(state["log_text"])
-        return {"log_chunks": chunks}
-
-    # ── Node: split_query ────────────────────────────────────────
-    def split_query(state: AnalysisState) -> dict:
-        raw = splitter_chain.invoke({"question": state["question"]})
-        # Parse JSON array from LLM response
-        try:
-            # Try to extract JSON array from response (may have extra text)
-            match = re.search(r'\[.*\]', raw, re.DOTALL)
-            if match:
-                sub_queries = json.loads(match.group())
-            else:
-                sub_queries = [state["question"]]
-        except (json.JSONDecodeError, TypeError):
-            # Fallback: use original question as-is
-            sub_queries = [state["question"]]
-        return {"sub_queries": sub_queries}
-
-    # ── Node: analyze_chunks ─────────────────────────────────────
-    def analyze_chunks(state: AnalysisState) -> dict:
-        analyses = []
-        for sq in state["sub_queries"]:
-            for i, chunk in enumerate(state["log_chunks"]):
-                result = analyst_chain.invoke({
-                    "log_chunk": chunk,
-                    "sub_query": sq,
-                })
-                analyses.append(
-                    f"--- Sub-query: {sq} | Chunk {i+1}/{len(state['log_chunks'])} ---\n{result}"
-                )
-        return {"chunk_analyses": analyses}
-
-    # ── Node: synthesize ─────────────────────────────────────────
-    def synthesize(state: AnalysisState) -> dict:
-        combined = "\n\n".join(state["chunk_analyses"])
-        answer = synthesis_chain.invoke({
-            "question": state["question"],
-            "analyses": combined,
-        })
-        return {"answer": answer}
-
-    # ── Assemble graph ───────────────────────────────────────────
-    graph = StateGraph(AnalysisState)
-    graph.add_node("chunk_logs", chunk_logs)
-    graph.add_node("split_query", split_query)
-    graph.add_node("analyze_chunks", analyze_chunks)
-    graph.add_node("synthesize", synthesize)
-
-    graph.add_edge(START, "chunk_logs")
-    graph.add_edge("chunk_logs", "split_query")
-    graph.add_edge("split_query", "analyze_chunks")
-    graph.add_edge("analyze_chunks", "synthesize")
-    graph.add_edge("synthesize", END)
-
-    return graph.compile()
+    return nlp_engine.full_analysis(log_text, query)
 
 
-# ── Public query functions (API-compatible) ────────────────────────
-def query_logs(log_text, query):
-    """Run the full multi-LLM analysis pipeline and return the result string."""
-    compiled = _build_analysis_graph(streaming=False)
-    result = compiled.invoke({
+def query_logs(log_text: str, query: str) -> str:
+    """
+    Run NLP analysis + LLM report generation (non-streaming).
+    Returns the complete report string.
+    """
+    # Step 1: NLP computation (instant)
+    analysis = analyze_logs(log_text, query)
+
+    if NLP_STATS_ONLY:
+        return analysis['context']
+
+    # Step 2: Single LLM call for narrative report
+    llm = get_report_llm(streaming=False)
+    chain = REPORT_PROMPT | llm | StrOutputParser()
+    report = chain.invoke({
         "question": query,
-        "log_text": log_text,
-        "log_chunks": [],
-        "sub_queries": [],
-        "chunk_analyses": [],
-        "answer": "",
+        "analysis_data": analysis['context'],
     })
-    return result.get("answer", "No result found.")
+
+    return report
 
 
-def query_logs_stream(log_text, query):
+def query_logs_stream(log_text: str, query: str):
     """
-    Run the multi-LLM pipeline and yield final synthesis tokens as they stream.
-    Intermediate steps (splitting, chunk analysis) run to completion first,
-    then the synthesis step streams token-by-token.
+    Run NLP analysis + stream the LLM report token-by-token.
+    Yields tokens as they are generated.
     """
-    # Step 1-3: Run splitting & chunk analysis (non-streaming)
-    analysis_llm = get_analysis_llm(streaming=False)
-    splitter_chain = QUERY_SPLITTER_PROMPT | analysis_llm | StrOutputParser()
-    analyst_chain = CHUNK_ANALYST_PROMPT | analysis_llm | StrOutputParser()
+    # Step 1: NLP computation (instant)
+    analysis = analyze_logs(log_text, query)
 
-    # Chunk the logs
-    log_chunks = chunk_log_text(log_text)
+    if NLP_STATS_ONLY:
+        yield analysis['context']
+        return
 
-    # Split the query
-    raw = splitter_chain.invoke({"question": query})
-    try:
-        match = re.search(r'\[.*\]', raw, re.DOTALL)
-        if match:
-            sub_queries = json.loads(match.group())
-        else:
-            sub_queries = [query]
-    except (json.JSONDecodeError, TypeError):
-        sub_queries = [query]
+    # Step 2: Stream the LLM report (single call)
+    llm = get_report_llm(streaming=True)
+    chain = REPORT_PROMPT | llm | StrOutputParser()
 
-    # Analyze each chunk for each sub-query
-    analyses = []
-    for sq in sub_queries:
-        for i, chunk in enumerate(log_chunks):
-            result = analyst_chain.invoke({
-                "log_chunk": chunk,
-                "sub_query": sq,
-            })
-            analyses.append(
-                f"--- Sub-query: {sq} | Chunk {i+1}/{len(log_chunks)} ---\n{result}"
-            )
-
-    # Step 4: Stream the synthesis
-    synthesis_llm = get_synthesis_llm(streaming=True)
-    synthesis_chain = SYNTHESIS_PROMPT | synthesis_llm | StrOutputParser()
-    combined = "\n\n".join(analyses)
-
-    for token in synthesis_chain.stream({
+    for token in chain.stream({
         "question": query,
-        "analyses": combined,
+        "analysis_data": analysis['context'],
     }):
         if token:
             yield token
 
 
-# ── CLI Mode (optional, for quick testing) ──────────────────────────
+def get_quick_stats(log_text: str) -> dict:
+    """
+    Run NLP analysis only (no LLM). Returns structured stats instantly.
+    Used for the quick-stats API endpoint.
+    """
+    analysis = nlp_engine.full_analysis(log_text)
+    return analysis['stats']
+
+
+# ── CLI Mode (for quick testing) ────────────────────────────────────
 if __name__ == "__main__":
     from rich.console import Console
     from rich.prompt import Prompt
     from rich.panel import Panel
     from rich.text import Text
+    import time
 
     console = Console()
     console.print(Panel(
         "[bold cyan]Security-Log-Analyser[/bold cyan]\n"
-        "[dim]Multi-LLM Analysis Engine (Query Splitting + Direct Log Injection)[/dim]",
+        "[dim]NLP-First Analysis Engine (Computation + Single LLM Report)[/dim]",
         expand=False,
     ))
 
@@ -331,6 +188,23 @@ if __name__ == "__main__":
         log_text = load_log_file(file_path)
         console.print(f"[dim]Loaded {len(log_text.splitlines())} lines[/dim]")
 
+        # Run NLP analysis first (instant)
+        console.print("[cyan]Running NLP analysis...[/cyan]")
+        start = time.time()
+        analysis = analyze_logs(log_text, "")
+        nlp_time = time.time() - start
+
+        stats = analysis['stats']
+        console.print(Panel(
+            f"[bold green]NLP Analysis Complete[/bold green] in {nlp_time:.2f}s\n\n"
+            f"  📊 Total entries: {stats['summary']['total_log_entries']}\n"
+            f"  🚨 Attacks: {stats['summary']['total_attacks']} ({stats['summary']['attack_ratio']}%)\n"
+            f"  🔐 Failed logins: {stats['summary']['total_failed_logins']}\n"
+            f"  🌐 Unique IPs: {stats['summary']['unique_ips']}\n"
+            f"  🎯 Attack types: {len(stats['attack_breakdown'])}",
+            title="[bold cyan]Instant NLP Stats[/bold cyan]",
+        ))
+
         query = Prompt.ask("[green]Enter your query (or 'exit' to quit)[/green]")
         if query.lower() == "exit":
             console.print("[red]Exiting...[/red]")
@@ -339,10 +213,13 @@ if __name__ == "__main__":
             console.print("[yellow]Empty query, try again.[/yellow]")
             continue
 
-        console.print("[cyan]Analysing (split → chunk-analyse → synthesize)...[/cyan]")
+        console.print("[cyan]Generating report (single LLM call)...[/cyan]")
+        start = time.time()
         response = query_logs(log_text, query)
+        total_time = time.time() - start
+
         console.print(Panel(
             Text(response, style="bold white"),
-            title="[bold cyan]Analysis Result[/bold cyan]",
+            title=f"[bold cyan]Analysis Result ({total_time:.1f}s)[/bold cyan]",
         ))
         console.print()

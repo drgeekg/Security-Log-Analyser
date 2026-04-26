@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Security-Log-Analyser — AI-powered security log analysis with RAG and Ollama LLM">
+    <meta name="description" content="Security-Log-Analyser — NLP-powered security log analysis with instant computed stats + LLM reporting">
     <title>Security-Log-Analyser</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>">
@@ -24,7 +24,7 @@
                 <div class="header__icon">🛡️</div>
                 <h1 class="header__title">Security-Log-Analyser</h1>
             </div>
-            <p class="header__subtitle">AI-powered security log analysis using RAG pipeline &amp; Ollama LLM</p>
+            <p class="header__subtitle">NLP-computed analysis + LLM-powered reporting &mdash; instant stats, single LLM call</p>
         </header>
 
         <!-- Main Content -->
@@ -54,6 +54,17 @@
                             Drag &amp; drop or <strong>browse</strong>
                         </p>
                         <input type="file" id="fileInput" accept=".md,.txt,.log,.csv">
+                    </div>
+                </div>
+
+                <!-- Instant Stats Panel (appears after file select) -->
+                <div class="glass-card stats-panel" id="statsPanel" style="display: none;">
+                    <div class="card-title">
+                        <span class="icon">⚡</span> Instant NLP Stats
+                        <span class="stats-badge" id="statsTime"></span>
+                    </div>
+                    <div class="stats-grid" id="statsGrid">
+                        <!-- Populated by JS -->
                     </div>
                 </div>
             </aside>
@@ -88,11 +99,12 @@
 
                     <!-- Quick Action Buttons -->
                     <div class="quick-actions" id="quickActions" style="margin-top: 12px;">
-                        <button class="quick-action-btn" data-query="Summarize all suspicious activities in the logs">🔍 Suspicious Activities</button>
-                        <button class="quick-action-btn" data-query="List all failed login attempts with IP addresses">🚫 Failed Logins</button>
-                        <button class="quick-action-btn" data-query="Detect any brute force or DDoS attacks">⚡ Brute Force / DDoS</button>
-                        <button class="quick-action-btn" data-query="Identify SQL injection attempts">💉 SQL Injection</button>
-                        <button class="quick-action-btn" data-query="What IPs performed the most attack attempts?">🌐 Top Attacker IPs</button>
+                        <button class="quick-action-btn" data-query="Provide a comprehensive security analysis of all logs">🔍 Full Analysis</button>
+                        <button class="quick-action-btn" data-query="List all failed login attempts with IP addresses and targeted users">🚫 Failed Logins</button>
+                        <button class="quick-action-btn" data-query="Detect any brute force or DDoS attacks, list source IPs and frequency">⚡ Brute Force / DDoS</button>
+                        <button class="quick-action-btn" data-query="Identify SQL injection and XSS attempts with details">💉 Injection Attacks</button>
+                        <button class="quick-action-btn" data-query="What IPs performed the most attack attempts? Profile their behavior">🌐 Top Attacker IPs</button>
+                        <button class="quick-action-btn" data-query="Identify all suspicious file uploads and potential malware">📁 Malicious Uploads</button>
                     </div>
                 </div>
 
@@ -113,7 +125,7 @@
 
         <!-- Footer -->
         <footer class="footer">
-            <p>Security-Log-Analyser &mdash; Built by <strong>Ganesh</strong> | Powered by Ollama &amp; LangGraph</p>
+            <p>Security-Log-Analyser &mdash; Built by <strong>Ganesh</strong> | NLP Engine + Ollama LLM</p>
         </footer>
     </div>
 
